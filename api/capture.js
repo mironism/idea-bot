@@ -64,9 +64,20 @@ module.exports = async (req, res) => {
       }
     }
 
+    // Generate AI title
+    let ideaTitle = Utils.truncateWithEllipsis(processedContent, 50); // Fallback
+    try {
+      const titleResult = await openaiClient.generateIdeaTitle(processedContent);
+      if (titleResult.success) {
+        ideaTitle = titleResult.title;
+      }
+    } catch (error) {
+      console.log('⚠️ AI title generation failed, using fallback:', error.message);
+    }
+
     // Create idea in Notion
     const ideaData = {
-      title: Utils.truncateWithEllipsis(processedContent, 50),
+      title: ideaTitle,
       rawText: processedContent,
       attachments: processedAttachments,
       status: 'Captured',

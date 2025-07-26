@@ -54,29 +54,43 @@
 /start  →  intro + examples
 ⮑ user: voice / text / file
 ⮑ bot: transcription / file-ack + clarify Q
-⮑ user: extra detail
-⮑ bot: shows draft + [👍 OK] [✖️ Cancel]
+⮑ user: extra detail (optional)
+⮑ bot: shows updated draft + [👍 OK] [✖️ Cancel]
 ⮑ bot: "🔎 Researching & categorizing…"
-⮑ after job: "✅ Saved! Category: [Business] View Notion ↗"
+⮑ after job: "✅ Analysis Complete! 
+• Key insight 1
+• Key insight 2  
+• Key insight 3
+📝 View Full Analysis in Notion ↗"
 ```
 
-### 4.2 Enrichment (Lite Brief + Categorization)
+### 4.2 Enrichment (Detailed Business Analysis + Categorization)
 
-Single GPT-4o call with system template:
+Two GPT-4o calls:
 
+**Call 1: Generate AI Title**
 ```
-Return JSON {
- summary,
- competitors:[{name,one_line}],
- market_size_estimate,
- cagr_pct_estimate,
- likely_biz_models:[…],
- next_step,
- category: {
-   name: "string", // e.g. "Business", "Research", "Personal", "Health", "Creative"
-   confidence: 0.8, // 0-1 confidence score
-   reasoning: "brief explanation"
- }
+Generate a concise, professional title (max 60 chars) for this idea: "{raw_text}"
+```
+
+**Call 2: Full Business Analysis**
+```
+Analyze this idea and create detailed business plan content:
+1. Executive Summary (2-3 paragraphs)
+2. Market Analysis (size, growth, key trends)  
+3. Competitive Landscape (4-5 competitors with analysis)
+4. Business Models (revenue streams, pricing strategies)
+5. User Stories (3-4 detailed scenarios)
+6. Next Steps (actionable recommendations)
+7. Resources (relevant links, tools, references)
+
+Also return category classification:
+{
+  "category": {
+    "name": "Business/Research/Personal/Health/Creative/etc",
+    "confidence": 0.8,
+    "reasoning": "explanation"
+  }
 }
 ```
 
@@ -92,14 +106,22 @@ No Perplexity/Web search in v1.0; rely on GPT knowledge.
 
 | Field       | Type                        | Description |
 | ----------- | --------------------------- | ----------- |
-| Idea title  | Title                       | Auto-generated from summary |
-| Raw text    | Long text                   | Verbatim user input |
+| Idea title  | Title                       | AI-generated concise title |
+| Raw text    | Rich text                   | Verbatim user input |
 | Attachments | Files / URLs                | Telegram CDN links |
-| Brief JSON  | Rich text (collapsed)       | Full AI analysis |
 | Category    | Select (dynamic options)    | AI-assigned category |
 | Confidence  | Number (0-1)                | Category confidence score |
 | Created     | Date                        | Timestamp |
 | Status      | Select (Captured, Enriched) | Processing status |
+
+**Page Body Content (for Enriched ideas):**
+- **Executive Summary** - Concise overview
+- **Market Analysis** - Size, growth, trends
+- **Competitive Landscape** - Key competitors with analysis
+- **Business Models** - Revenue stream suggestions
+- **User Stories** - Target user scenarios
+- **Next Steps** - Actionable recommendations
+- **Resources** - Relevant links and references
 
 **Dynamic Category Management:**
 - Notion Select field options are managed programmatically

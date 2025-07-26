@@ -247,9 +247,20 @@ async function handleIdeaCapture(message, telegramClient, notionClient, openaiCl
       throw new Error('No content extracted from message');
     }
 
+    // Generate AI title
+    let ideaTitle = Utils.truncateWithEllipsis(content, 50); // Fallback
+    try {
+      const titleResult = await openaiClient.generateIdeaTitle(content);
+      if (titleResult.success) {
+        ideaTitle = titleResult.title;
+      }
+    } catch (error) {
+      console.log('⚠️ AI title generation failed, using fallback:', error.message);
+    }
+
     // Create idea in Notion
     const ideaData = {
-      title: Utils.truncateWithEllipsis(content, 50),
+      title: ideaTitle,
       rawText: content,
       attachments: attachments,
       status: 'Captured',
@@ -356,19 +367,24 @@ async function triggerEnrichment(ideaId, ideaText, telegramClient, notionClient,
       
       // Update Notion entry with enrichment
       await notionClient.updateIdeaEntry(ideaId, {
-        briefJson: enrichedIdea,
+        businessPlanContent: enrichedIdea.businessPlanContent,
         category: enrichedIdea.category.name,
         confidence: enrichedIdea.category.confidence,
         status: 'Enriched'
       });
       
-      // Send success message
+      // Send success message with key insights
       let successText = `✅ <b>Analysis Complete!</b>\n\n`;
-      successText += `<b>Category:</b> ${enrichedIdea.category.name} (${Math.round(enrichedIdea.category.confidence * 100)}% confidence)\n`;
-      successText += `<b>Summary:</b> ${enrichedIdea.summary}\n\n`;
-      successText += `<b>Market:</b> ${enrichedIdea.market_size_estimate}\n`;
-      successText += `<b>Growth:</b> ${enrichedIdea.cagr_pct_estimate} CAGR\n\n`;
-      successText += `<b>Next Step:</b> ${enrichedIdea.next_step}\n\n`;
+      
+      // Add bullet points from key insights
+      if (enrichedIdea.keyInsights && enrichedIdea.keyInsights.length > 0) {
+        for (const insight of enrichedIdea.keyInsights.slice(0, 5)) {
+          successText += `• ${insight}\n`;
+        }
+        successText += `\n`;
+      }
+      
+      successText += `<b>Category:</b> ${enrichedIdea.category.name} (${Math.round(enrichedIdea.category.confidence * 100)}% confidence)\n\n`;
       successText += `<a href="https://notion.so/${ideaId.replace(/-/g, '')}">📝 View Full Analysis in Notion</a>`;
       
       await telegramClient.sendMessage(chatId, successText);
