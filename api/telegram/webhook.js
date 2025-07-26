@@ -202,14 +202,83 @@ async function handleIdeaCapture(message, telegramClient, notionClient, openaiCl
       '🔄 Processing your idea...'
     );
 
-    // Call capture API endpoint
-    const captureResponse = await axios.post(`${process.env.VERCEL_URL || 'http://localhost:3000'}/api/capture`, ideaData);
-    
-    if (!captureResponse.data.success) {
-      throw new Error('Capture API failed');
+    // Process idea directly instead of HTTP call
+    let processedContent = ideaData.content;
+    let processedAttachments = ideaData.attachments;
+    let ideaTitle = 'New Idea';
+
+    // Handle different content types
+    switch (ideaData.type) {
+      case 'text':
+        processedContent = Utils.sanitizeInput(ideaData.content);
+        ideaTitle = Utils.truncateWithEllipsis(processedContent, 50);
+        break;
+
+      case 'voice':
+        try {
+          if (typeof ideaData.content === 'string' && Utils.isValidUrl(ideaData.content)) {
+            const fileData = await openaiClient.downloadFile(ideaData.content);
+            const transcription = await openaiClient.transcribeAudio(fileData.buffer);
+            
+            if (!transcription.success) {
+              throw new Error('Voice transcription failed');
+            }
+
+            processedContent = transcription.text;
+            ideaTitle = Utils.truncateWithEllipsis(processedContent, 50);
+
+            processedAttachments.push({
+              type: 'audio',
+              url: ideaData.content,
+              name: 'voice_message.ogg',
+              size: fileData.size,
+            });
+          } else {
+            throw new Error('Invalid voice content format');
+          }
+        } catch (error) {
+          throw new Error(`Voice processing failed: ${error.message}`);
+        }
+        break;
+
+      case 'file':
+        processedContent = ideaData.metadata?.caption || ideaData.content || 'File attachment';
+        ideaTitle = `File: ${ideaData.metadata?.filename || 'attachment'}`;
+        break;
     }
 
-    const captureData = captureResponse.data.data;
+    // Create initial idea entry in Notion
+    const ideaEntryData = {
+      title: ideaTitle,
+      rawText: processedContent,
+      attachments: processedAttachments,
+      status: 'Captured',
+    };
+
+    const notionEntry = await notionClient.createIdeaEntry(ideaEntryData);
+    const ideaId = notionEntry.id;
+
+    // Generate clarifying question
+    let clarifyingQuestion = null;
+    try {
+      const questionResult = await openaiClient.generateClarifyingQuestion(processedContent);
+      if (questionResult.success) {
+        clarifyingQuestion = questionResult.question;
+      }
+    } catch (error) {
+      // Continue without clarifying question
+    }
+
+    const captureData = {
+      ideaId,
+      notionUrl: `https://notion.so/${ideaId.replace(/-/g, '')}`,
+      title: ideaTitle,
+      processedContent,
+      attachments: processedAttachments,
+      clarifyingQuestion,
+      status: 'captured',
+      nextStep: clarifyingQuestion ? 'clarify' : 'enrich',
+    };
 
     // Delete processing message
     try {
@@ -306,17 +375,72 @@ async function processEnrichment(ideaId, ideaText, chatId, telegramClient) {
       '🔎 Researching & categorizing your idea...'
     );
 
-    // Call enrichment API
-    const enrichResponse = await axios.post(`${process.env.VERCEL_URL || 'http://localhost:3000'}/api/enrich-lite`, {
-      ideaId,
-      ideaText,
-    });
+    // Process enrichment directly instead of HTTP call
+    const notionClient = new NotionClient();
+    const openaiClient = new OpenAIClient();
 
-    if (!enrichResponse.data.success) {
-      throw new Error('Enrichment API failed');
+    // Get existing categories from Notion
+    let existingCategories = [];
+    try {
+      existingCategories = await notionClient.getCategories();
+    } catch (error) {
+      // Continue without categories
     }
 
-    const enrichData = enrichResponse.data.data;
+    // Generate AI enrichment with categorization
+    const enrichmentResult = await openaiClient.enrichIdea(ideaText, existingCategories);
+    
+    if (!enrichmentResult.success) {
+      throw new Error('AI enrichment failed');
+    }
+
+    const { enrichedIdea } = enrichmentResult;
+
+    // Handle category creation if needed
+    let finalCategory = enrichedIdea.category.name;
+    if (enrichedIdea.category.confidence >= 0.7) {
+      const categoryExists = existingCategories.some(
+        cat => cat.name.toLowerCase() === enrichedIdea.category.name.toLowerCase()
+      );
+
+      if (!categoryExists) {
+        try {
+          await notionClient.addCategory(enrichedIdea.category.name);
+        } catch (error) {
+          // Continue with enrichment even if category creation fails
+        }
+      }
+    }
+
+    // Update Notion entry with enrichment data
+    await notionClient.updateIdeaEntry(ideaId, {
+      briefJson: enrichedIdea,  
+      category: finalCategory,
+      confidence: enrichedIdea.category.confidence,
+      status: 'Enriched',
+    });
+
+    const enrichData = {
+      ideaId,
+      enrichment: {
+        summary: enrichedIdea.summary,
+        category: {
+          name: finalCategory,
+          confidence: enrichedIdea.category.confidence,
+          reasoning: enrichedIdea.category.reasoning,
+        },
+        competitors: enrichedIdea.competitors,
+        market_analysis: {
+          size_estimate: enrichedIdea.market_size_estimate,
+          cagr_estimate: enrichedIdea.cagr_pct_estimate,
+        },
+        business_models: enrichedIdea.likely_biz_models,
+        next_step: enrichedIdea.next_step,
+        disclaimer: enrichedIdea.disclaimer,
+        generated_at: enrichedIdea.generated_at,
+      },
+      notionUrl: `https://notion.so/${ideaId.replace(/-/g, '')}`,
+    };
 
     // Delete enriching message
     try {
