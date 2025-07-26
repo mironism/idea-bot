@@ -37,11 +37,7 @@ module.exports = async (req, res) => {
     const notionClient = new NotionClient();
     const openaiClient = new OpenAIClient();
 
-    // Handle callback queries (button presses)
-    if (update.callback_query) {
-      await handleCallbackQuery(update.callback_query, telegramClient, notionClient, openaiClient);
-      return res.status(200).json({ ok: true });
-    }
+    // Simplified flow - no callback queries needed
 
     // Handle regular messages
     if (update.message) {
@@ -269,35 +265,16 @@ async function handleIdeaCapture(message, telegramClient, notionClient, openaiCl
     const notionEntry = await notionClient.createIdeaEntry(ideaData);
     console.log('💾 Idea saved to Notion:', notionEntry.id);
 
-    // Generate clarifying question
-    let clarifyingQuestion = null;
-    try {
-      const questionResult = await openaiClient.generateClarifyingQuestion(content);
-      if (questionResult.success) {
-        clarifyingQuestion = questionResult.question;
-      }
-    } catch (error) {
-      console.log('⚠️ Clarifying question failed:', error.message);
-    }
-
-    // Send success response with clarification or direct enrichment
-    let responseText = `✅ <b>Idea captured!</b>\n\n`;
+    // Send initial success response
+    let responseText = `✅ <b>Idea captured!</b>\n`;
     responseText += `<b>Title:</b> ${ideaData.title}\n`;
     responseText += `<b>Notion:</b> <a href="https://notion.so/${notionEntry.id.replace(/-/g, '')}">View in Notion</a>\n\n`;
+    responseText += `🔎 Researching & categorizing your idea...`;
 
-    if (clarifyingQuestion) {
-      responseText += `<b>💡 Quick question:</b> ${clarifyingQuestion}\n\n`;
-      responseText += `You can add more details or click OK to proceed with AI analysis.`;
-      
-      const keyboard = telegramClient.createOkCancelKeyboard(notionEntry.id);
-      await telegramClient.sendMessage(chatId, responseText, keyboard);
-    } else {
-      responseText += `🔎 Starting AI analysis and categorization...`;
-      await telegramClient.sendMessage(chatId, responseText);
-      
-      // Trigger enrichment directly
-      await triggerEnrichment(notionEntry.id, content, telegramClient, notionClient, openaiClient, chatId);
-    }
+    await telegramClient.sendMessage(chatId, responseText);
+    
+    // Trigger enrichment directly (no clarification needed)
+    await triggerEnrichment(notionEntry.id, content, telegramClient, notionClient, openaiClient, chatId);
 
   } catch (error) {
     console.error('❌ Idea capture error:', error);
@@ -308,39 +285,7 @@ async function handleIdeaCapture(message, telegramClient, notionClient, openaiCl
   }
 }
 
-// Handle callback queries (button presses)
-async function handleCallbackQuery(callbackQuery, telegramClient, notionClient, openaiClient) {
-  const { data, message, from } = callbackQuery;
-  const chatId = message.chat.id;
-  
-  try {
-    await telegramClient.answerCallbackQuery(callbackQuery.id);
-    
-    const [action, ideaId] = data.split('_');
-    
-    switch (action) {
-      case 'ok':
-        // User confirmed, start enrichment
-        await telegramClient.sendMessage(chatId, '🔎 Researching & categorizing your idea...');
-        
-        // Get the idea content from Notion to enrich it
-        const ideaContent = message.text || 'Idea content'; // This should be improved to get actual content
-        await triggerEnrichment(ideaId, ideaContent, telegramClient, notionClient, openaiClient, chatId);
-        break;
-        
-      case 'cancel':
-        await telegramClient.sendMessage(chatId, '❌ Idea capture cancelled. You can send a new idea anytime!');
-        break;
-        
-      default:
-        await telegramClient.sendMessage(chatId, '❓ Unknown action. Please try again.');
-    }
-    
-  } catch (error) {
-    console.error('❌ Callback query error:', error);
-    await telegramClient.sendMessage(chatId, '⚠️ Something went wrong. Please try again.');
-  }
-}
+// Handle callback queries (button presses) - REMOVED since we simplified the flow
 
 // Trigger AI enrichment process
 async function triggerEnrichment(ideaId, ideaText, telegramClient, notionClient, openaiClient, chatId) {
