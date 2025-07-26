@@ -1,6 +1,7 @@
 require('dotenv').config();
 const NotionClient = require('../lib/notion');
 const OpenAIClient = require('../lib/openai');
+const TelegramClient = require('../lib/telegram');
 const Utils = require('../lib/utils');
 
 module.exports = async (req, res) => {
@@ -19,135 +20,292 @@ module.exports = async (req, res) => {
     return res.status(405).json(Utils.createErrorResponse(new Error('Method not allowed'), 405));
   }
 
+  // DETECT TELEGRAM WEBHOOK vs REGULAR CAPTURE
+  const isTelegramWebhook = req.body && (req.body.update_id !== undefined || req.body.message !== undefined);
+  
+  if (isTelegramWebhook) {
+    console.log('🤖 TELEGRAM WEBHOOK detected:', JSON.stringify(req.body, null, 2));
+    return handleTelegramWebhook(req, res);
+  } else {
+    console.log('📝 REGULAR CAPTURE detected:', JSON.stringify(req.body, null, 2));
+    return handleRegularCapture(req, res);
+  }
+};
+
+// Handle Telegram webhook requests
+async function handleTelegramWebhook(req, res) {
   try {
-    // Validate environment variables
-    Utils.validateEnvironmentVariables();
+    const update = req.body;
 
-    const { type, content, attachments = [], metadata = {} } = req.body;
-
-    if (!type || !content) {
-      return res.status(400).json(
-        Utils.createErrorResponse(new Error('Missing required fields: type, content'), 400)
-      );
+    // Validate Telegram update
+    if (!update || !update.message) {
+      return res.status(400).json({ error: 'Invalid Telegram update' });
     }
 
-    Utils.logWithTimestamp(`Capture request: type=${type}, content_length=${content.length}`);
+    const message = update.message;
+    const chatId = message.chat.id;
 
+    console.log(`Processing Telegram message from chat ${chatId}`);
+
+    // Initialize clients
+    const telegramClient = new TelegramClient();
     const notionClient = new NotionClient();
     const openaiClient = new OpenAIClient();
 
-    let processedContent = content;
-    let processedAttachments = attachments;
-    let ideaTitle = 'New Idea';
+    // Send processing message
+    await telegramClient.sendMessage(chatId, '🔄 Processing your idea...');
 
-    // Handle different content types
-    switch (type) {
-      case 'text':
-        processedContent = Utils.sanitizeInput(content);
-        ideaTitle = Utils.truncateWithEllipsis(processedContent, 50);
-        break;
+    // Determine message type and content
+    let content = '';
+    let attachments = [];
 
-      case 'voice':
-        try {
-          Utils.logWithTimestamp('Processing voice content');
-          
-          // Expect content to be a file URL or buffer info
-          if (typeof content === 'string' && Utils.isValidUrl(content)) {
-            // Download and transcribe
-            const fileData = await openaiClient.downloadFile(content);
-            const transcription = await openaiClient.transcribeAudio(fileData.buffer);
-            
-            if (!transcription.success) {
-              throw new Error('Voice transcription failed');
-            }
+    if (message.text) {
+      content = message.text;
+      console.log('Text message:', content);
+    } else if (message.voice) {
+      // Handle voice
+      const voiceFile = await telegramClient.downloadFile(message.voice.file_id);
+      const fileData = await openaiClient.downloadFile(voiceFile.url);
+      const transcription = await openaiClient.transcribeAudio(fileData.buffer);
 
-            processedContent = transcription.text;
-            ideaTitle = Utils.truncateWithEllipsis(processedContent, 50);
-
-            // Add original voice file as attachment
-            processedAttachments.push({
-              type: 'audio',
-              url: content,
-              name: 'voice_message.ogg',
-              size: fileData.size,
-            });
-
-            Utils.logWithTimestamp(`Voice transcribed: ${transcription.text.length} chars`);
-          } else {
-            throw new Error('Invalid voice content format');
-          }
-        } catch (error) {
-          Utils.logWithTimestamp(`Voice processing error: ${error.message}`, 'error');
-          return res.status(500).json(
-            Utils.createErrorResponse(new Error(`Voice processing failed: ${error.message}`), 500)
-          );
-        }
-        break;
-
-      case 'file':
-        // Handle file attachments
-        processedContent = metadata.caption || content || 'File attachment';
-        ideaTitle = `File: ${metadata.filename || 'attachment'}`;
-        break;
-
-      default:
-        return res.status(400).json(
-          Utils.createErrorResponse(new Error(`Unsupported content type: ${type}`), 400)
-        );
+      if (transcription.success) {
+        content = transcription.text;
+        attachments.push({
+          type: 'audio',
+          url: voiceFile.url,
+          name: 'voice_message.ogg',
+          size: message.voice.file_size,
+        });
+        console.log('Voice transcribed:', content);
+      } else {
+        throw new Error('Voice transcription failed');
+      }
+    } else {
+      content = 'Unsupported message type';
     }
 
-    // Create initial idea entry in Notion
+    // Create idea in Notion
     const ideaData = {
-      title: ideaTitle,
-      rawText: processedContent,
-      attachments: processedAttachments,
+      title: Utils.truncateWithEllipsis(content, 50),
+      rawText: content,
+      attachments: attachments,
       status: 'Captured',
     };
 
     const notionEntry = await notionClient.createIdeaEntry(ideaData);
-    const ideaId = notionEntry.id;
-
-    Utils.logWithTimestamp(`Idea captured in Notion: ${ideaId}`);
+    console.log('Idea saved to Notion:', notionEntry.id);
 
     // Generate clarifying question
+    let clarifyingQuestion = null;
+    try {
+      const questionResult = await openaiClient.generateClarifyingQuestion(content);
+      if (questionResult.success) {
+        clarifyingQuestion = questionResult.question;
+      }
+    } catch (error) {
+      console.log('Clarifying question failed:', error.message);
+    }
+
+    // Send success response to user
+    let responseText = `✅ <b>Idea captured!</b>\n\n`;
+    responseText += `<b>Title:</b> ${ideaData.title}\n`;
+    responseText += `<b>Notion:</b> <a href="https://notion.so/${notionEntry.id.replace(/-/g, '')}">View in Notion</a>\n\n`;
+
+    if (clarifyingQuestion) {
+      responseText += `<b>💡 Quick question:</b> ${clarifyingQuestion}`;
+    } else {
+      responseText += `Your idea has been saved! You can now send another idea or check your Notion database.`;
+    }
+
+    await telegramClient.sendMessage(chatId, responseText);
+
+    console.log('✅ Telegram webhook processed successfully');
+    return res.status(200).json({ ok: true });
+
+  } catch (error) {
+    console.error('❌ Telegram webhook error:', error);
+
+    // Try to send error message to user if we have chatId
+    try {
+      const chatId = req.body?.message?.chat?.id;
+      if (chatId) {
+        const telegramClient = new TelegramClient();
+        await telegramClient.sendMessage(
+          chatId,
+          `⚠️ Something went wrong: ${error.message}\n\nPlease try again.`
+        );
+      }
+    } catch (notifyError) {
+      console.error('Failed to notify user of error:', notifyError);
+    }
+
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+// Handle regular capture requests (existing logic)
+async function handleRegularCapture(req, res) {
+  try {
+    // Validate environment variables
+    const validationResult = Utils.validateEnvironmentVariables([
+      'NOTION_API_KEY',
+      'NOTION_DATABASE_ID',
+      'OPENAI_API_KEY'
+    ]);
+
+    if (!validationResult.isValid) {
+      return res.status(500).json(Utils.createErrorResponse(
+        new Error(`Missing environment variables: ${validationResult.missing.join(', ')}`), 
+        500
+      ));
+    }
+
+    // Initialize clients
+    const notionClient = new NotionClient();
+    const openaiClient = new OpenAIClient();
+
+    // Validate request body
+    const { type, content, attachments = [], metadata = {} } = req.body;
+
+    if (!type || !content) {
+      return res.status(400).json(Utils.createErrorResponse(
+        new Error('Type and content are required'), 
+        400
+      ));
+    }
+
+    if (!['text', 'voice', 'url', 'file'].includes(type)) {
+      return res.status(400).json(Utils.createErrorResponse(
+        new Error('Invalid type. Must be one of: text, voice, url, file'), 
+        400
+      ));
+    }
+
+    let processedContent = content;
+    let processedAttachments = attachments;
+
+    // Handle voice content (transcription)
+    if (type === 'voice') {
+      if (!content.startsWith('http')) {
+        return res.status(400).json(Utils.createErrorResponse(
+          new Error('Voice content must be a URL to audio file'), 
+          400
+        ));
+      }
+
+      try {
+        const fileData = await openaiClient.downloadFile(content);
+        const transcription = await openaiClient.transcribeAudio(fileData.buffer);
+        
+        if (!transcription.success) {
+          throw new Error(transcription.error || 'Transcription failed');
+        }
+
+        processedContent = transcription.text;
+        
+        // Add the audio file as an attachment
+        processedAttachments.push({
+          type: 'audio',
+          url: content,
+          name: fileData.filename || 'voice_message.wav',
+          size: fileData.size,
+          mimeType: fileData.mimeType
+        });
+
+      } catch (error) {
+        console.error('Voice transcription error:', error);
+        return res.status(500).json(Utils.createErrorResponse(
+          new Error(`Voice transcription failed: ${error.message}`), 
+          500
+        ));
+      }
+    }
+
+    // Handle URL content (extract and validate)
+    if (type === 'url') {
+      if (!Utils.isValidUrl(content)) {
+        return res.status(400).json(Utils.createErrorResponse(
+          new Error('Invalid URL format'), 
+          400
+        ));
+      }
+
+      // Extract additional URLs from content if any
+      const extractedUrls = Utils.extractUrls(content);
+      processedAttachments = [
+        ...processedAttachments,
+        ...extractedUrls.map(url => ({
+          type: 'url',
+          url: url,
+          name: Utils.truncateWithEllipsis(url, 50)
+        }))
+      ];
+    }
+
+    // Validate attachments
+    if (processedAttachments.some(att => att.size && att.size > 20 * 1024 * 1024)) {
+      return res.status(400).json(Utils.createErrorResponse(
+        new Error('Attachment size cannot exceed 20MB'), 
+        400
+      ));
+    }
+
+    // Create the idea entry in Notion
+    const ideaData = {
+      title: Utils.truncateWithEllipsis(processedContent, 100),
+      rawText: processedContent,
+      type: type,
+      attachments: processedAttachments,
+      status: 'Captured',
+      metadata: {
+        ...metadata,
+        source: 'api',
+        capturedAt: new Date().toISOString()
+      }
+    };
+
+    const notionEntry = await notionClient.createIdeaEntry(ideaData);
+
+    // Generate a clarifying question (optional, best effort)
     let clarifyingQuestion = null;
     try {
       const questionResult = await openaiClient.generateClarifyingQuestion(processedContent);
       if (questionResult.success) {
         clarifyingQuestion = questionResult.question;
-        Utils.logWithTimestamp(`Clarifying question generated: ${clarifyingQuestion.length} chars`);
       }
     } catch (error) {
-      Utils.logWithTimestamp(`Question generation failed: ${error.message}`, 'warn');
-      // Continue without clarifying question
+      console.log('Clarifying question generation failed (non-critical):', error.message);
     }
 
     // Return success response
-    const responseData = {
-      ideaId,
-      notionUrl: `https://notion.so/${ideaId.replace(/-/g, '')}`,
-      title: ideaTitle,
-      processedContent,
-      attachments: processedAttachments,
-      clarifyingQuestion,
-      status: 'captured',
-      nextStep: clarifyingQuestion ? 'clarify' : 'enrich',
+    const response = {
+      success: true,
+      message: 'Idea captured successfully',
+      data: {
+        notionId: notionEntry.id,
+        title: ideaData.title,
+        type: type,
+        status: 'Captured',
+        notionUrl: `https://notion.so/${notionEntry.id.replace(/-/g, '')}`,
+        clarifyingQuestion: clarifyingQuestion,
+        attachments: processedAttachments.length
+      },
+      timestamp: new Date().toISOString()
     };
 
-    Utils.logWithTimestamp(`Capture completed successfully: ${ideaId}`);
-    return res.status(200).json(Utils.createSuccessResponse(responseData));
+    console.log('Idea captured successfully:', {
+      notionId: notionEntry.id,
+      title: ideaData.title,
+      type: type
+    });
+
+    return res.status(201).json(response);
 
   } catch (error) {
-    Utils.logWithTimestamp(`Capture error: ${error.message}`, 'error');
+    console.error('Capture error:', error);
     
-    if (error.message.includes('Missing required environment variables')) {
-      return res.status(500).json(
-        Utils.createErrorResponse(new Error('Server configuration error'), 500)
-      );
-    }
-
-    return res.status(500).json(
-      Utils.createErrorResponse(error, 500)
-    );
+    // Return user-friendly error message
+    const statusCode = error.status || 500;
+    return res.status(statusCode).json(Utils.createErrorResponse(error, statusCode));
   }
-}; 
+} 
