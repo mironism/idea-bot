@@ -1,4 +1,4 @@
-export default async function handler(req, res) {
+module.exports = async (req, res) => {
   console.log('TEST ENDPOINT CALLED');
   console.log('Method:', req.method);
   console.log('Body:', JSON.stringify(req.body, null, 2));
@@ -55,4 +55,4 @@ export default async function handler(req, res) {
       stack: error.stack
     });
   }
-} 
+}; 
