@@ -17,6 +17,11 @@ module.exports = async (req, res) => {
 
   try {
     Utils.validateEnvironmentVariables();
+    
+    // Additional environment check
+    if (!process.env.NOTION_API_KEY || !process.env.NOTION_DATABASE_ID || !process.env.OPENAI_API_KEY) {
+      throw new Error('Missing critical environment variables');
+    }
 
     const update = req.body;
     
@@ -306,14 +311,17 @@ ${captureData.clarifyingQuestion}`;
       await telegramClient.sendMessage(chatId, questionMessage, keyboard);
     } else {
       // No clarifying question, proceed directly to enrichment
-      await processEnrichment(captureData.ideaId, captureData.processedContent, chatId, telegramClient);
+      await processEnrichment(captureData.ideaId, captureData.processedContent, chatId, telegramClient, notionClient, openaiClient);
     }
 
   } catch (error) {
     Utils.logWithTimestamp(`Idea capture error: ${error.message}`, 'error');
+    console.error('Full error details:', error);
     
-    const errorResponse = telegramClient.formatErrorMessage(error);
-    await telegramClient.sendMessage(chatId, errorResponse);
+    await telegramClient.sendMessage(
+      chatId,
+      `⚠️ <b>Something went wrong</b>\n\nError: ${error.message}\n\nPlease try again in a moment.`
+    );
   }
 }
 
@@ -335,11 +343,11 @@ async function handleCallbackQuery(callbackQuery, telegramClient, notionClient, 
         break;
 
       case 'skip':
-        await processEnrichment(callbackData.ideaId, 'Idea content', chatId, telegramClient);
+        await processEnrichment(callbackData.ideaId, 'Idea content', chatId, telegramClient, notionClient, openaiClient);
         break;
 
       case 'ok':
-        await processEnrichment(callbackData.ideaId, 'Idea content', chatId, telegramClient);
+        await processEnrichment(callbackData.ideaId, 'Idea content', chatId, telegramClient, notionClient, openaiClient);
         break;
 
       case 'cancel':
@@ -367,17 +375,13 @@ async function handleCallbackQuery(callbackQuery, telegramClient, notionClient, 
   }
 }
 
-async function processEnrichment(ideaId, ideaText, chatId, telegramClient) {
+async function processEnrichment(ideaId, ideaText, chatId, telegramClient, notionClient, openaiClient) {
   try {
     // Send enrichment started message
     const enrichingMsg = await telegramClient.sendMessage(
       chatId,
       '🔎 Researching & categorizing your idea...'
     );
-
-    // Process enrichment directly instead of HTTP call
-    const notionClient = new NotionClient();
-    const openaiClient = new OpenAIClient();
 
     // Get existing categories from Notion
     let existingCategories = [];
@@ -476,17 +480,11 @@ ${enrichData.enrichment.next_step}
 
   } catch (error) {
     Utils.logWithTimestamp(`Enrichment error: ${error.message}`, 'error');
+    console.error('Full enrichment error details:', error);
     
-    const errorResponse = telegramClient.formatErrorMessage(
-      error, 
-      'enrich', 
-      ideaId
+    await telegramClient.sendMessage(
+      chatId,
+      `⚠️ <b>Enrichment failed</b>\n\nError: ${error.message}\n\nYour idea was saved, but AI analysis failed. Please try again.`
     );
-    
-    if (typeof errorResponse === 'object') {
-      await telegramClient.sendMessage(chatId, errorResponse.text, errorResponse.keyboard);
-    } else {
-      await telegramClient.sendMessage(chatId, errorResponse);
-    }
   }
 } 
