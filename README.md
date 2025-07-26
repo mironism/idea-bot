@@ -28,7 +28,7 @@ Telegram Bot → API Endpoints → OpenAI/Notion → Background Enrichment
 - `POST /api/enrich-lite` - AI analysis & categorization
 - `GET /api/categories` - Category management
 - `GET /api/stats` - Admin statistics
-- `POST /api/telegram/webhook` - Telegram integration
+- `POST /api/webhook` - Telegram integration
 
 ## 🚀 Quick Start
 
@@ -85,7 +85,7 @@ vercel --prod
 ```bash
 curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://your-vercel-domain.vercel.app/api/telegram/webhook"}'
+  -d '{"url": "https://your-vercel-domain.vercel.app/api/webhook"}'
 ```
 
 ## 📱 Usage
