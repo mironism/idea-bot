@@ -144,9 +144,11 @@ async function handleIdeaCapture(message, telegramClient, notionClient, openaiCl
     };
 
     // Process different message types
+    console.log(`Processing message type: ${messageType}`);
     switch (messageType) {
       case 'text':
-        ideaData.content = message.text;
+        ideaData.content = Utils.sanitizeInput(message.text);
+        console.log(`Text content: ${ideaData.content}`);
         break;
 
       case 'voice':
@@ -158,12 +160,25 @@ async function handleIdeaCapture(message, telegramClient, notionClient, openaiCl
           return;
         }
 
-        const voiceFile = await telegramClient.downloadFile(message.voice.file_id);
-        ideaData.content = voiceFile.url;
-        ideaData.metadata = {
-          duration: message.voice.duration,
-          fileSize: message.voice.file_size,
-        };
+        try {
+          const voiceFile = await telegramClient.downloadFile(message.voice.file_id);
+          const fileData = await openaiClient.downloadFile(voiceFile.url);
+          const transcription = await openaiClient.transcribeAudio(fileData.buffer);
+          
+          if (!transcription.success) {
+            throw new Error('Voice transcription failed');
+          }
+
+          ideaData.content = transcription.text;
+          ideaData.attachments = [{
+            type: 'audio',
+            url: voiceFile.url,
+            name: 'voice_message.ogg',
+            size: message.voice.file_size,
+          }];
+        } catch (error) {
+          throw new Error(`Voice processing failed: ${error.message}`);
+        }
         break;
 
       case 'photo':
@@ -207,50 +222,10 @@ async function handleIdeaCapture(message, telegramClient, notionClient, openaiCl
       '🔄 Processing your idea...'
     );
 
-    // Process idea directly instead of HTTP call
+    // Use the already processed content from ideaData
     let processedContent = ideaData.content;
     let processedAttachments = ideaData.attachments;
-    let ideaTitle = 'New Idea';
-
-    // Handle different content types
-    switch (ideaData.type) {
-      case 'text':
-        processedContent = Utils.sanitizeInput(ideaData.content);
-        ideaTitle = Utils.truncateWithEllipsis(processedContent, 50);
-        break;
-
-      case 'voice':
-        try {
-          if (typeof ideaData.content === 'string' && Utils.isValidUrl(ideaData.content)) {
-            const fileData = await openaiClient.downloadFile(ideaData.content);
-            const transcription = await openaiClient.transcribeAudio(fileData.buffer);
-            
-            if (!transcription.success) {
-              throw new Error('Voice transcription failed');
-            }
-
-            processedContent = transcription.text;
-            ideaTitle = Utils.truncateWithEllipsis(processedContent, 50);
-
-            processedAttachments.push({
-              type: 'audio',
-              url: ideaData.content,
-              name: 'voice_message.ogg',
-              size: fileData.size,
-            });
-          } else {
-            throw new Error('Invalid voice content format');
-          }
-        } catch (error) {
-          throw new Error(`Voice processing failed: ${error.message}`);
-        }
-        break;
-
-      case 'file':
-        processedContent = ideaData.metadata?.caption || ideaData.content || 'File attachment';
-        ideaTitle = `File: ${ideaData.metadata?.filename || 'attachment'}`;
-        break;
-    }
+    let ideaTitle = Utils.truncateWithEllipsis(processedContent, 50);
 
     // Create initial idea entry in Notion
     const ideaEntryData = {
