@@ -1,8 +1,8 @@
 require('dotenv').config();
-const TelegramClient = require('../../lib/telegram');
-const NotionClient = require('../../lib/notion');
-const OpenAIClient = require('../../lib/openai');
-const Utils = require('../../lib/utils');
+const TelegramClient = require('../lib/telegram');
+const NotionClient = require('../lib/notion');
+const OpenAIClient = require('../lib/openai');
+const Utils = require('../lib/utils');
 const axios = require('axios');
 
 module.exports = async (req, res) => {
