@@ -16,6 +16,8 @@ module.exports = async (req, res) => {
   }
 
   try {
+    console.log('Webhook called with body:', JSON.stringify(req.body, null, 2));
+    
     Utils.validateEnvironmentVariables();
     
     // Additional environment check
@@ -29,9 +31,16 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: 'Invalid Telegram update' });
     }
 
+    console.log('Creating clients...');
+    
     const telegramClient = new TelegramClient();
+    console.log('TelegramClient created');
+    
     const notionClient = new NotionClient();
+    console.log('NotionClient created');
+    
     const openaiClient = new OpenAIClient();
+    console.log('OpenAIClient created');
 
     // Handle callback queries (button presses)
     if (update.callback_query) {
@@ -58,8 +67,15 @@ module.exports = async (req, res) => {
     return res.status(200).json({ ok: true });
 
   } catch (error) {
+    console.error('WEBHOOK ERROR:', error);
+    console.error('Error stack:', error.stack);
     Utils.logWithTimestamp(`Webhook error: ${error.message}`, 'error');
-    return res.status(500).json({ error: 'Internal server error' });
+    
+    return res.status(500).json({ 
+      error: 'Internal server error',
+      details: error.message,
+      stack: error.stack 
+    });
   }
 };
 
