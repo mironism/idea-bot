@@ -277,11 +277,7 @@ async function handleIdeaCapture(message, telegramClient, notionClient, openaiCl
     };
 
     // Delete processing message
-    try {
-      await telegramClient.bot.deleteMessage(chatId, processingMsg.message_id);
-    } catch (e) {
-      // Ignore deletion errors
-    }
+    await telegramClient.deleteMessage(chatId, processingMsg.message_id);
 
     // Send clarifying question if available
     if (captureData.clarifyingQuestion) {
@@ -322,7 +318,7 @@ async function handleCallbackQuery(callbackQuery, telegramClient, notionClient, 
   
   try {
     // Acknowledge the callback query
-    await telegramClient.bot.answerCallbackQuery(callbackQuery.id);
+    await telegramClient.answerCallbackQuery(callbackQuery.id);
 
     switch (callbackData.action) {
       case 'clarify':
@@ -438,11 +434,7 @@ async function processEnrichment(ideaId, ideaText, chatId, telegramClient, notio
     };
 
     // Delete enriching message
-    try {
-      await telegramClient.bot.deleteMessage(chatId, enrichingMsg.message_id);
-    } catch (e) {
-      // Ignore deletion errors
-    }
+    await telegramClient.deleteMessage(chatId, enrichingMsg.message_id);
 
     // Format success message
     const successMessage = `✅ <b>Idea Saved & Enriched!</b>
