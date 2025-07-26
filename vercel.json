@@ -1,0 +1,15 @@
+{
+  "functions": {
+    "api/**/*.js": {
+      "runtime": "nodejs20.x",
+      "maxDuration": 60
+    }
+  },
+  "env": {
+    "TELEGRAM_BOT_TOKEN": "@telegram_bot_token",
+    "OPENAI_API_KEY": "@openai_api_key", 
+    "NOTION_API_KEY": "@notion_api_key",
+    "NOTION_DATABASE_ID": "@notion_database_id",
+    "ADMIN_TELEGRAM_USER_ID": "@admin_telegram_user_id"
+  }
+} 
