@@ -36,24 +36,53 @@ module.exports = async (req, res) => {
 async function handleTelegramWebhook(req, res) {
   try {
     const update = req.body;
+    console.log('🤖 Processing Telegram update:', JSON.stringify(update, null, 2));
 
-    // Validate Telegram update
-    if (!update || !update.message) {
-      return res.status(400).json({ error: 'Invalid Telegram update' });
+    // More flexible validation - handle different types of updates
+    if (!update) {
+      console.error('❌ No update body received');
+      return res.status(400).json({ error: 'No update body' });
     }
 
-    const message = update.message;
-    const chatId = message.chat.id;
+    // Handle different types of updates
+    let message = null;
+    let chatId = null;
 
-    console.log(`Processing Telegram message from chat ${chatId}`);
+    if (update.message) {
+      message = update.message;
+      chatId = message.chat.id;
+    } else if (update.edited_message) {
+      message = update.edited_message;
+      chatId = message.chat.id;
+    } else if (update.callback_query) {
+      // Handle callback queries (inline keyboard responses)
+      message = update.callback_query.message;
+      chatId = update.callback_query.message.chat.id;
+    } else {
+      console.log('⚠️ Unsupported update type:', Object.keys(update));
+      // Return 200 to acknowledge the update but don't process it
+      return res.status(200).json({ ok: true, message: 'Update acknowledged but not processed' });
+    }
+
+    if (!message || !chatId) {
+      console.error('❌ No valid message or chat ID found');
+      return res.status(400).json({ error: 'Invalid message structure' });
+    }
+
+    console.log(`✅ Processing message from chat ${chatId}`);
 
     // Initialize clients
     const telegramClient = new TelegramClient();
     const notionClient = new NotionClient();
     const openaiClient = new OpenAIClient();
 
-    // Send processing message
-    await telegramClient.sendMessage(chatId, '🔄 Processing your idea...');
+    // Send processing message FIRST
+    try {
+      await telegramClient.sendMessage(chatId, '🔄 Processing your idea...');
+    } catch (error) {
+      console.error('❌ Failed to send processing message:', error);
+      // Continue processing even if this fails
+    }
 
     // Determine message type and content
     let content = '';
